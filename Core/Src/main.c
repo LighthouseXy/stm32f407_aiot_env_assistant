@@ -247,6 +247,22 @@ int main(void)
   displayTaskHandle = osThreadNew(StartDisplayTask, NULL, &displayTask_attributes);
   wifiTaskHandle = osThreadNew(StartWifiTask, NULL, &wifiTask_attributes);
   mqttTaskHandle = osThreadNew(StartMqttTask, NULL, &mqttTask_attributes);
+
+  if (sensorTaskHandle == NULL) {
+    printf("[rtos] sensorTask create failed\r\n");
+  }
+
+  if (displayTaskHandle == NULL) {
+    printf("[rtos] displayTask create failed\r\n");
+  }
+
+  if (wifiTaskHandle == NULL) {
+    printf("[rtos] wifiTask create failed\r\n");
+  }
+
+  if (mqttTaskHandle == NULL) {
+    printf("[rtos] mqttTask create failed\r\n");
+  }
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -602,7 +618,7 @@ void StartMqttTask(void *argument)
   for(;;)
   {
     /* MQTT 当前仍是占位流程，恢复后便于后续接入上报状态机。 */
-    // App_MqttTaskLoop();
+    App_MqttTaskLoop();
     osDelay(3000);
   }
 }

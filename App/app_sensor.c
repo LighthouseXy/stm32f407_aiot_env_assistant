@@ -101,7 +101,7 @@ void AppSensor_Update(void)
     state->light_percent = light_percent;
 
     /* 诊断日志限频输出，避免串口刷屏；HAL 状态：0=OK，1=ERROR，2=BUSY，3=TIMEOUT。 */
-    if ((state->tick_ms - last_sensor_debug_tick) >= 2000U) {
+    if ((state->tick_ms - last_sensor_debug_tick) >= 10000U) {
         int temp_x10 = (int)(state->temperature * 10.0f);
         int hum_x10 = (int)(state->humidity * 10.0f);
 

@@ -78,3 +78,27 @@
 | `oled-wifi-conn.jpg` | OLED `W:CONN` 状态显示照片 | 证明 OLED 可显示 WiFi 连接中状态 |
 | `oled-wifi-ok.jpg` | OLED `W:OK` 状态显示照片 | 证明 OLED 可显示 WiFi 已连接状态 |
 | `serial-wifi-connecting.png` | 串口 `wifi=CONNECTING` 状态同步截图 | 证明串口日志可同步 WiFi 连接中状态 |
+
+## MQTT 最小发布验证
+
+当前 MQTT 验证范围是 CONNECT / CONNACK / 单次 PUBLISH，不包含长期周期发布。
+
+| 文件 | 内容 | 用途 |
+| --- | --- | --- |
+| `mqtt-01-at-timeout.png` | MQTT 前置 AT 探测连续超时 | 记录 ESP01S 入网后短时间不可响应的现象 |
+| `mqtt-02-cipmux-blocked.png` | MQTT 流程停在 `AT+CIPMUX=0` | 记录早期接收窗口和任务调度问题 |
+| `mqtt-03-link-invalid-after-close.png` | TCP 连接后被关闭，`link is not valid` | 证明 CONNECT 发送时机过慢会导致链路失效 |
+| `mqtt-04-cipmux-timeout.png` | `AT+CIPMUX=0` 偶发超时 | 记录需要重试机制的原因 |
+| `mqtt-05-connect-send-ok.png` | MQTT CONNECT 报文发送成功 | 证明 `AT+CIPSEND` 和 payload 发送流程可用 |
+| `mqtt-06-connack-timeout.png` | CONNECT 已发送但 CONNACK 单独等待超时 | 记录拆分接收窗口导致漏读的中间问题 |
+| `mqtt-07-cipmux-retry-timeout.png` | 重试机制下的 CIPMUX 超时 | 记录 MQTT 任务需要可恢复重试 |
+| `mqtt-08-cipstart-partial-timeout.png` | `AT+CIPSTART` 只收到部分响应 | 记录串口接收窗口受调度影响的现象 |
+| `mqtt-09-connect-send-ok-waiting-connack.png` | CONNECT 发送成功但 CONNACK 未被解析 | 记录修正前的中间状态 |
+| `mqtt-10-connack-ok.png` | `+IPD,4: 20 02 00 00` 和 `CONNACK OK` | 证明 MQTT CONNECT / CONNACK 最小闭环成功 |
+| `mqtt-11-reboot-retry-connack-ok.png` | 重启后通过 AT 探测重试并再次 CONNACK OK | 证明重试逻辑可以恢复一次 ESP 未就绪状态 |
+| `mqtt-12-connect-send-ok-tail-missed.png` | CONNECT 阶段只采到 `D OK` 尾部 | 记录 SEND OK 被截断时需要兼容判断 |
+| `mqtt-13-publish-send-ok-tail-missed.png` | PUBLISH 阶段只采到 `Recv xx bytes` 片段 | 记录 PUBLISH 发送确认被拆分的现象 |
+| `mqtt-14-publish-cipsend-prompt-timeout.png` | PUBLISH `CIPSEND` 提示符超时 | 记录 CONNACK 二进制尾巴影响下一条 AT 指令 |
+| `mqtt-15-connack-ipd-incomplete.png` | 只收到 `+IPD,4:`，CONNACK 未补全 | 记录需要补收 CONNACK 的原因 |
+| `mqtt-16-publish-send-ok.png` | 串口显示 `PUBLISH packet SEND OK` | 证明 STM32 已通过 ESP01S 发出 MQTT PUBLISH 报文 |
+| `mqtt-17-platform-json-received.png` | HiveMQ WebSocket Client 收到 JSON | 证明平台端订阅 `stm32f407/env` 可收到环境数据 |

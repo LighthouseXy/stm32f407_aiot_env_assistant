@@ -41,6 +41,9 @@ typedef struct {
     char text[APP_WIFI_RX_BUF_SIZE];
     uint16_t len;
 } AppWifiAtResponse_t;
+/* AT 响应缓存较大，放到静态区，避免调用方任务栈被压爆。 */
+static AppWifiAtResponse_t wifi_cmd_resp;
+static AppWifiAtResponse_t wifi_tcp_resp;
 
 typedef struct {
     const char *cmd;
@@ -149,26 +152,43 @@ static AppWifiAtResult_t AppWifi_SendAtCommand(const char *cmd,
     /* 接收窗口内只缓存，不 printf，避免日志输出干扰 ESP01S 回复采集。 */
     uint32_t start_tick = HAL_GetTick();
     while ((HAL_GetTick() - start_tick) < timeout_ms) {
-        if (HAL_UART_Receive(&huart3, &ch, 1U, 20U) == HAL_OK) {
-            if (resp->len < (APP_WIFI_RX_BUF_SIZE - 1U)) {
-                resp->text[resp->len++] = (char)ch;
-                resp->text[resp->len] = '\0';
-            }
+      if (HAL_UART_Receive(&huart3, &ch, 1U, 20U) == HAL_OK) {
+        if (resp->len < (APP_WIFI_RX_BUF_SIZE - 1U)) {
+          resp->text[resp->len++] = (char)ch;
+          resp->text[resp->len] = '\0';
         }
+
+        /*
+         * 收到期望关键字后尽快结束接收窗口。
+         * 对 MQTT TCP 连接尤其重要，避免连接建立后长时间不发送 MQTT CONNECT，
+         * 导致 broker 主动关闭连接。
+         */
+        if (strstr(resp->text, expect) != NULL) {
+          break;
+        }
+
+        if ((strstr(resp->text, "ERROR") != NULL) ||
+            (strstr(resp->text, "FAIL") != NULL) ||
+            (strstr(resp->text, "busy") != NULL) ||
+            (strstr(resp->text, "CLOSED") != NULL)) {
+          break;
+        }
+      }
     }
 
     AppWifi_PrintResponse(resp);
 
     if ((strstr(resp->text, "ERROR") != NULL) ||
         (strstr(resp->text, "FAIL") != NULL) ||
-        (strstr(resp->text, "busy") != NULL)) {
-        printf("[esp] result=REPLY_ERR\r\n");
-        return APP_WIFI_AT_REPLY_ERROR;
+        (strstr(resp->text, "busy") != NULL) ||
+        (strstr(resp->text, "CLOSED") != NULL)) {
+      printf("[esp] result=REPLY_ERR\r\n");
+      return APP_WIFI_AT_REPLY_ERROR;
     }
 
     if (strstr(resp->text, expect) != NULL) {
-        printf("[esp] result=OK\r\n");
-        return APP_WIFI_AT_OK;
+      printf("[esp] result=OK\r\n");
+      return APP_WIFI_AT_OK;
     }
 
     printf("[esp] result=TIMEOUT\r\n");
@@ -177,13 +197,162 @@ static AppWifiAtResult_t AppWifi_SendAtCommand(const char *cmd,
 
 /* Exported functions ------------------------------------------------------*/
 
-void AppWifi_Init(void)
+void AppWifi_Init(void) {
+  AppState_t *state = AppState_Get();
+  state->wifi_status = APP_WIFI_OFF;
+  last_print_tick = 0;
+  /* 系统启动后允许执行一次 ESP01S AT 通信测试 */
+  esp_at_test_done = 0;
+}
+
+int AppWifi_SendCommand(const char *cmd, const char *expect,
+                        uint32_t timeout_ms) {
+  AppWifiAtResult_t result;
+  /*
+   * MQTT 模块只关心 AT 指令是否成功。
+   * 具体的接收缓存、text/hex 打印、ERROR/FAIL/busy 判断仍复用 WiFi
+   * 模块内部逻辑。
+   */
+  result = AppWifi_SendAtCommand(cmd, expect, timeout_ms, &wifi_cmd_resp);
+
+  return (result == APP_WIFI_AT_OK) ? 0 : -1;
+}
+
+int AppWifi_SendTcpPayload(const uint8_t *payload,
+                           uint16_t len,
+                           uint8_t *rx_buf,
+                           uint16_t rx_max_len,
+                           uint16_t *rx_len,
+                           uint32_t timeout_ms)
 {
-    AppState_t *state = AppState_Get();
-    state->wifi_status = APP_WIFI_OFF;
-    last_print_tick = 0;
-    /* 系统启动后允许执行一次 ESP01S AT 通信测试 */
-    esp_at_test_done = 0;
+    char cmd_buf[32];
+    AppWifiAtResponse_t *resp = &wifi_tcp_resp;
+    uint8_t ch = 0U;
+    uint32_t start_tick;
+    uint32_t send_ok_tick = 0U;
+    uint8_t send_ok_seen = 0U;
+
+    if ((payload == NULL) || (len == 0U) ||
+        (rx_buf == NULL) || (rx_len == NULL) || (rx_max_len == 0U)) {
+        return -1;
+    }
+
+    *rx_len = 0U;
+
+    /* ESP01S TCP 发送流程：CIPSEND -> 等待 '>' -> 发送 MQTT 报文。 */
+    snprintf(cmd_buf, sizeof(cmd_buf), "AT+CIPSEND=%u", (unsigned int)len);
+
+    if (AppWifi_SendAtCommand(cmd_buf, ">", timeout_ms, resp) != APP_WIFI_AT_OK) {
+        printf("[esp] CIPSEND prompt failed\r\n");
+        return -1;
+    }
+
+    AppWifi_ClearUartErrorFlags();
+
+    if (HAL_UART_Transmit(&huart3, (uint8_t *)payload, len, 1000U) != HAL_OK) {
+        printf("[esp] tcp payload tx failed\r\n");
+        return -1;
+    }
+
+    memset(resp, 0, sizeof(*resp));
+    start_tick = HAL_GetTick();
+
+    /*
+     * 发送 payload 后持续接收。
+     * 不能在 SEND OK 后立刻退出，因为 MQTT CONNACK 可能紧跟 SEND OK 返回。
+     */
+    while ((HAL_GetTick() - start_tick) < timeout_ms) {
+        if (HAL_UART_Receive(&huart3, &ch, 1U, 20U) == HAL_OK) {
+            if (resp->len < (APP_WIFI_RX_BUF_SIZE - 1U)) {
+                resp->text[resp->len++] = (char)ch;
+                resp->text[resp->len] = '\0';
+            }
+
+            if (*rx_len < rx_max_len) {
+              rx_buf[*rx_len] = ch;
+              (*rx_len)++;
+            }
+
+            if ((send_ok_seen == 0U) &&
+                ((strstr(resp->text, "SEND OK") != NULL) ||
+                 (strstr(resp->text, "D OK") != NULL) ||
+                 (strstr(resp->text, "bytes") != NULL))) {
+              /*
+               * ESP01S 有时只采到 "Recv xx bytes" 或 "SEND OK" 的尾部。
+               * 对 QoS0 MQTT PUBLISH，模块已接收完整 payload
+               * 后即可作为最小发布验证。
+               */
+              send_ok_seen = 1U;
+              send_ok_tick = HAL_GetTick();
+            }
+            if ((strstr(resp->text, "ERROR") != NULL) ||
+                (strstr(resp->text, "CLOSED") != NULL)) {
+              break;
+            }
+        }
+
+        /* SEND OK 后再多收 800ms，给 +IPD/CONNACK 留窗口。 */
+        if ((send_ok_seen != 0U) && ((HAL_GetTick() - send_ok_tick) >= 800U)) {
+            break;
+        }
+    }
+
+    AppWifi_PrintResponse(resp);
+
+    if (send_ok_seen != 0U) {
+        printf("[esp] tcp payload SEND OK\r\n");
+        return 0;
+    }
+
+    printf("[esp] tcp payload SEND failed\r\n");
+    return -1;
+}
+
+int AppWifi_ReceiveTcpData(uint8_t *buf,
+                           uint16_t max_len,
+                           uint16_t *out_len,
+                           uint32_t timeout_ms)
+{
+    uint8_t ch = 0U;
+    uint32_t start_tick;
+
+    if ((buf == NULL) || (out_len == NULL) || (max_len == 0U)) {
+        return -1;
+    }
+
+    *out_len = 0U;
+    start_tick = HAL_GetTick();
+
+    AppWifi_ClearUartErrorFlags();
+
+    /* 读取 ESP01S 透传回来的 TCP 数据，例如 +IPD,4: 后面的 MQTT CONNACK。 */
+    while ((HAL_GetTick() - start_tick) < timeout_ms) {
+        if (HAL_UART_Receive(&huart3, &ch, 1U, 20U) == HAL_OK) {
+            if (*out_len < max_len) {
+                buf[*out_len] = ch;
+                (*out_len)++;
+            }
+        }
+    }
+
+    if (*out_len == 0U) {
+        printf("[esp] tcp recv none\r\n");
+        return -1;
+    }
+
+    printf("[esp] tcp recv len=%u text=", *out_len);
+    for (uint16_t i = 0U; i < *out_len; i++) {
+        char out = ((buf[i] >= 32U) && (buf[i] <= 126U)) ? (char)buf[i] : '.';
+        printf("%c", out);
+    }
+
+    printf("\r\n[esp] tcp recv hex=");
+    for (uint16_t i = 0U; i < *out_len; i++) {
+        printf("%02X ", buf[i]);
+    }
+    printf("\r\n");
+
+    return 0;
 }
 
 void AppWifi_Process(void) {
@@ -231,12 +400,12 @@ void AppWifi_Process(void) {
       snprintf(cmd_buf, sizeof(cmd_buf), "AT+CWJAP=\"%s\",\"%s\"",
                APP_WIFI_SSID, APP_WIFI_PASSWORD);
 
-      result = AppWifi_SendAtCommand(cmd_buf, "WIFI GOT IP",
+      result = AppWifi_SendAtCommand(cmd_buf, "OK",
                                      APP_WIFI_JOIN_TIMEOUT_MS, &resp);
       break;
 
     case APP_WIFI_STEP_CIFSR:
-      result = AppWifi_SendAtCommand("AT+CIFSR", "STAIP",
+      result = AppWifi_SendAtCommand("AT+CIFSR", "OK",
                                      APP_WIFI_IP_TIMEOUT_MS, &resp);
       break;
 

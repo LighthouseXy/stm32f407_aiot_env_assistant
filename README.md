@@ -1,8 +1,8 @@
 # STM32F407 AIoT 桌面环境助手
 
-基于 STM32F407ZGT6 + FreeRTOS 的桌面 AIoT 环境监测助手。项目围绕本地环境采集、OLED 显示、按键交互、串口日志、ESP01S WiFi 入网和 MQTT 扩展展开，目标是形成一个可展示、可复现、可写入简历的嵌入式项目。
+基于 STM32F407ZGT6 + FreeRTOS 的桌面 AIoT 环境监测助手。项目围绕本地环境采集、OLED 显示、按键交互、串口日志、ESP01S WiFi 入网和 MQTT 环境数据上报展开，目标是形成一个可展示、可复现、可写入简历的嵌入式项目。
 
-当前版本已完成本地 MVP 和 ESP01S WiFi 基础入网链路：
+当前版本已完成本地 MVP、ESP01S WiFi 基础入网链路和 MQTT 最小发布验证：
 
 - AHT30 温湿度采集。
 - 板载光敏传感器 `PF7 / ADC3_IN5` 真实采样。
@@ -10,16 +10,25 @@
 - KEY0 / KEY1 / KEY2 本地交互。
 - USART1 串口日志。
 - ESP01S 通过 USART3 完成 `AT / ATE0 / CWMODE / CWJAP / CIFSR` 入网流程。
+- ESP01S 通过 TCP 连接 MQTT broker，完成 MQTT CONNECT / CONNACK，并向 topic 发布环境数据。
 
 ## 项目效果
 
+MQTT 平台端接收结果：
+
+![MQTT 平台端收到环境数据 JSON](docs/images/mqtt-17-platform-json-received.png)
+
 OLED 本地显示：
 
-![OLED WiFi OK 状态显示](docs/images/oled-wifi-ok.jpg)
+<img src="docs/images/oled-wifi-ok.jpg" alt="OLED WiFi OK 状态显示" width="360">
 
 ESP01S WiFi 入网日志：
 
 ![ESP01S CWJAP WiFi 入网成功](docs/images/esp01s-wifi-joined-cwjap.png)
+
+MQTT 最小发布成功日志：
+
+![MQTT PUBLISH SEND OK](docs/images/mqtt-16-publish-send-ok.png)
 
 板载光敏传感器验证：
 
@@ -68,7 +77,7 @@ App/app_state.c     统一系统状态
 App/app_sensor.c    AHT30 + 光敏采集
 App/app_display.c   OLED 显示
 App/app_wifi.c      ESP01S AT / WiFi 入网
-App/app_mqtt.c      MQTT 占位与后续扩展入口
+App/app_mqtt.c      MQTT CONNECT / PUBLISH 最小发布验证
 ```
 
 当前主要任务包括：
@@ -77,6 +86,7 @@ App/app_mqtt.c      MQTT 占位与后续扩展入口
 - `displayTask`：刷新 OLED 状态页面。
 - `keyTask`：处理 KEY0 / KEY1 / KEY2。
 - `wifiTask`：执行 ESP01S AT 入网流程。
+- `mqttTask`：在 WiFi 成功后执行 MQTT TCP 连接、CONNECT 握手和一次环境数据发布。
 
 ### 本地环境采集
 
@@ -146,11 +156,36 @@ OK
 [esp] wifi connected and got ip
 ```
 
+### MQTT 最小发布验证
+
+当前已完成 MQTT 3.1.1 CONNECT / CONNACK / PUBLISH 最小闭环，验证链路：
+
+```text
+WiFi CONNECTED / WIFI GOT IP
+AT+CIPMUX=0
+AT+CIPSTART="TCP","broker.hivemq.com",1883
+AT+CIPSEND=32
+MQTT CONNECT packet
++IPD,4: 20 02 00 00
+AT+CIPSEND=60
+MQTT PUBLISH packet
+```
+
+验证结果：
+
+```text
+[mqtt] tcp connect OK
+[esp] tcp payload SEND OK
+[mqtt] CONNECT packet SEND OK
+[mqtt] CONNACK OK
+[mqtt] PUBLISH packet SEND OK
+```
+
 说明：
 
 - 文档和截图中不保留真实 WiFi 密码。
-- 当前已完成 WiFi 入网，不等同于 MQTT 已完成。
-- WiFi 失败重试、断线恢复和更完整状态机仍是后续优化项。
+- 当前完成的是一次 MQTT 环境数据发布验证，不等同于长期周期发布。
+- WiFi / MQTT 断线恢复和周期发布仍是后续优化项。
 
 ## 构建方式
 
@@ -196,6 +231,8 @@ build/Debug/stm32f407_aiot_env_assistant.elf
 
 - OLED WiFi 状态显示：`docs/images/oled-wifi-ok.jpg`
 - WiFi 入网成功日志：`docs/images/esp01s-wifi-joined-cwjap.png`
+- MQTT PUBLISH 成功串口日志：`docs/images/mqtt-16-publish-send-ok.png`
+- MQTT 平台端接收 JSON：`docs/images/mqtt-17-platform-json-received.png`
 - 光敏 ADC 串口变化：`docs/images/light-sensor-serial-percent.png`
 - I2C 扫描发现 AHT30 和 OLED：`docs/images/i2c-scan-aht30-oled.png`
 
@@ -209,13 +246,14 @@ build/Debug/stm32f407_aiot_env_assistant.elf
 - 串口日志与 I2C 扫描。
 - ESP01S 最小 AT 通信。
 - ESP01S WiFi 基础入网。
+- MQTT CONNECT / CONNACK / PUBLISH 最小发布验证。
 
 进行中 / 待优化：
 
 - WiFi 失败重试。
 - WiFi 断线恢复。
 - I2C1 互斥或统一访问调度。
-- MQTT 最小发布。
+- MQTT 周期发布与断线恢复。
 - GitHub 展示文档继续打磨。
 
 ## 项目亮点
@@ -225,8 +263,9 @@ build/Debug/stm32f407_aiot_env_assistant.elf
 - 真实接入板载光敏传感器，而不是停留在模拟数据。
 - OLED 与串口共用同一份状态，便于调试和展示。
 - ESP01S AT 通信调试过程中定位了“只收到回显开头 A”的接收窗口问题，并改成先缓存、后打印。
+- MQTT CONNECT / PUBLISH 通过 text + hex 日志和平台订阅结果验证，保留了从超时、链路关闭到成功发布的调试证据。
 - 保留功能截图和硬件证据，便于复现和项目展示。
 
 ## 说明
 
-这是一个学习和展示性质的嵌入式项目，当前重点是把桌面环境助手的本地闭环和 WiFi 入网链路做完整。MQTT 上报、断线重连、I2C mutex 和更完整状态机属于后续扩展方向。
+这是一个学习和展示性质的嵌入式项目，当前重点是把桌面环境助手的本地闭环、WiFi 入网链路和 MQTT 最小发布验证做完整。MQTT 周期发布、断线重连、I2C mutex 和更完整状态机属于后续扩展方向。
