@@ -1,14 +1,14 @@
-# 图片与验证证据归档
+# 运行图片索引
 
-本目录用于保存项目开发过程中的硬件照片、接线照片、串口截图、OLED 显示照片和功能验证证据。
+本目录用于保存硬件照片、接线照片、串口运行结果、OLED 显示效果和平台接收结果。
 
-图片文件按功能命名，便于在 README、项目计划和简历项目说明中引用。
+图片文件按功能命名，便于在 README 和详细设计文档中引用。
 
 ## 硬件与模块照片
 
 | 文件 | 内容 | 用途 |
 | --- | --- | --- |
-| `dev-board-overview.jpg` | 探索者 V3 STM32F407 开发板整体图 | GitHub README 和硬件说明 |
+| `dev-board-overview.jpg` | 探索者 V3 STM32F407 开发板整体图 | README 和硬件说明 |
 | `aht30-module-wiring.jpg` | AHT30 模块接线图 | AHT30 硬件连接说明 |
 | `oled-module.jpg` | OLED 模块照片 | OLED 模块说明和接线记录 |
 
@@ -79,9 +79,9 @@
 | `oled-wifi-ok.jpg` | OLED `W:OK` 状态显示照片 | 证明 OLED 可显示 WiFi 已连接状态 |
 | `serial-wifi-connecting.png` | 串口 `wifi=CONNECTING` 状态同步截图 | 证明串口日志可同步 WiFi 连接中状态 |
 
-## MQTT 最小发布验证
+## MQTT 数据发布
 
-当前 MQTT 验证范围是 CONNECT / CONNACK / 单次 PUBLISH，不包含长期周期发布。
+当前固件在 WiFi 入网后完成 CONNECT / CONNACK 和单次 PUBLISH，周期发布与断线恢复列入后续版本的运行策略。
 
 | 文件 | 内容 | 用途 |
 | --- | --- | --- |
@@ -94,7 +94,7 @@
 | `mqtt-07-cipmux-retry-timeout.png` | 重试机制下的 CIPMUX 超时 | 记录 MQTT 任务需要可恢复重试 |
 | `mqtt-08-cipstart-partial-timeout.png` | `AT+CIPSTART` 只收到部分响应 | 记录串口接收窗口受调度影响的现象 |
 | `mqtt-09-connect-send-ok-waiting-connack.png` | CONNECT 发送成功但 CONNACK 未被解析 | 记录修正前的中间状态 |
-| `mqtt-10-connack-ok.png` | `+IPD,4: 20 02 00 00` 和 `CONNACK OK` | 证明 MQTT CONNECT / CONNACK 最小闭环成功 |
+| `mqtt-10-connack-ok.png` | `+IPD,4: 20 02 00 00` 和 `CONNACK OK` | 记录 MQTT CONNECT / CONNACK 握手成功 |
 | `mqtt-11-reboot-retry-connack-ok.png` | 重启后通过 AT 探测重试并再次 CONNACK OK | 证明重试逻辑可以恢复一次 ESP 未就绪状态 |
 | `mqtt-12-connect-send-ok-tail-missed.png` | CONNECT 阶段只采到 `D OK` 尾部 | 记录 SEND OK 被截断时需要兼容判断 |
 | `mqtt-13-publish-send-ok-tail-missed.png` | PUBLISH 阶段只采到 `Recv xx bytes` 片段 | 记录 PUBLISH 发送确认被拆分的现象 |

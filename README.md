@@ -1,38 +1,55 @@
 # STM32F407 AIoT 桌面环境助手
 
-基于 STM32F407ZGT6 + FreeRTOS 的桌面 AIoT 环境监测助手。项目围绕本地环境采集、OLED 显示、按键交互、串口日志、ESP01S WiFi 入网和 MQTT 环境数据上报展开，目标是形成一个可展示、可复现、可写入简历的嵌入式项目。
+基于 STM32F407ZGT6 与 FreeRTOS 构建的桌面环境监测终端，集成温湿度与光照采集、OLED 本地显示、按键交互、串口诊断、ESP01S WiFi 联网及 MQTT 数据上报，实现从环境感知、状态管理到云端通信的完整数据链路。
 
-当前版本已完成本地 MVP、ESP01S WiFi 基础入网链路和 MQTT 最小发布验证：
-
-- AHT30 温湿度采集。
-- 板载光敏传感器 `PF7 / ADC3_IN5` 真实采样。
-- OLED 显示温度、湿度、光照百分比和 WiFi 状态。
-- KEY0 / KEY1 / KEY2 本地交互。
-- USART1 串口日志。
-- ESP01S 通过 USART3 完成 `AT / ATE0 / CWMODE / CWJAP / CIFSR` 入网流程。
-- ESP01S 通过 TCP 连接 MQTT broker，完成 MQTT CONNECT / CONNACK，并向 topic 发布环境数据。
+系统通过 FreeRTOS 将传感器采集、显示刷新、按键处理、WiFi 入网和 MQTT 通信拆分为独立任务，并使用统一状态模型管理环境数据、工作模式、报警及网络状态。
 
 ## 项目效果
 
-MQTT 平台端接收结果：
+MQTT 平台接收 STM32 发布的环境数据：
 
 ![MQTT 平台端收到环境数据 JSON](docs/images/mqtt-17-platform-json-received.png)
 
-OLED 本地显示：
+OLED 本地环境状态显示：
 
-<img src="docs/images/oled-wifi-ok.jpg" alt="OLED WiFi OK 状态显示" width="360">
+<img src="docs/images/oled-wifi-ok.jpg" alt="OLED 环境与 WiFi 状态显示" width="360">
 
-ESP01S WiFi 入网日志：
+ESP01S 完成 WiFi 入网：
 
 ![ESP01S CWJAP WiFi 入网成功](docs/images/esp01s-wifi-joined-cwjap.png)
 
-MQTT 最小发布成功日志：
+MQTT PUBLISH 数据发送结果：
 
 ![MQTT PUBLISH SEND OK](docs/images/mqtt-16-publish-send-ok.png)
 
-板载光敏传感器验证：
+## 核心能力
 
-![光敏 raw percent 串口变化](docs/images/light-sensor-serial-percent.png)
+- 通过 AHT30 采集温度与湿度。
+- 通过板载光敏传感器 `PF7 / ADC3_IN5` 采集光照强度。
+- OLED 显示温度、湿度、光照百分比和 WiFi 状态。
+- KEY0 / KEY1 / KEY2 分别完成模式切换、状态诊断和报警恢复。
+- USART1 输出系统状态、传感器数据和通信日志。
+- ESP01S 通过 USART3 完成 AT 初始化、WiFi 入网与 IP 获取。
+- STM32 本地构造 MQTT 3.1.1 CONNECT 与 PUBLISH 报文。
+- 通过 TCP 连接 MQTT broker，并向 `stm32f407/env` 发布 JSON 环境数据。
+
+## 系统架构
+
+```text
+AHT30 -------- I2C1 ----+
+OLED --------- I2C1 ----+                    +--> USART1 运行日志
+板载光敏 ------ ADC3 ----> STM32F407 + FreeRTOS
+KEY0/1/2 ------ GPIO ----+                    +--> USART3 --> ESP01S --> WiFi --> MQTT
+                              |
+                              +--> AppState_t 统一状态管理
+```
+
+数据流：
+
+```text
+环境采集 -> AppState_t -> OLED / USART1 -> ESP01S -> MQTT broker
+                      -> 按键模式与报警状态
+```
 
 ## 硬件组成
 
@@ -45,9 +62,9 @@ MQTT 最小发布成功日志：
 | 光敏 | 板载 LS1 / LIGHT_SENSOR，`PF7 / ADC3_IN5` |
 | WiFi | ESP01S / ESP8266 AT 固件，`USART3 PB10/PB11` |
 | 日志串口 | USART1 |
-| 按键 | KEY0 模式切换，KEY1 状态打印/I2C 扫描，KEY2 清除报警 |
+| 按键 | KEY0 模式切换，KEY1 状态诊断，KEY2 报警恢复 |
 
-I2C1 当前共用连接：
+I2C1 连接：
 
 ```text
 PB6 / I2C1_SCL -> AHT30 SCL + OLED SCL
@@ -56,7 +73,7 @@ PB7 / I2C1_SDA -> AHT30 SDA + OLED SDA
 GND             -> AHT30 GND + OLED GND
 ```
 
-ESP01S 当前连接：
+ESP01S 连接：
 
 ```text
 PB10 / USART3_TX -> ESP01S RXD
@@ -65,69 +82,52 @@ GND              -> ESP01S GND
 3.3V             -> ESP01S VCC / EN
 ```
 
-## 已实现功能
+> ESP01S 使用 3.3V 供电和 3.3V 电平，不可直接接入 5V。
 
-### FreeRTOS 多任务框架
+## 软件设计
 
-工程已拆出应用层模块，避免把业务逻辑堆在 `main.c`：
+### FreeRTOS 任务划分
+
+| 任务 | 职责 |
+| --- | --- |
+| `sensorTask` | 周期采集 AHT30 和光敏 ADC |
+| `displayTask` | 根据统一状态刷新 OLED |
+| `keyTask` | 处理模式切换、状态诊断和报警恢复 |
+| `wifiTask` | 执行 ESP01S 初始化与 WiFi 入网 |
+| `mqttTask` | 建立 TCP 连接，完成 MQTT 握手与环境数据发布 |
+
+应用逻辑集中在 `App/` 目录，与 CubeMX 生成代码保持边界：
 
 ```text
 App/app_main.c      应用入口
 App/app_state.c     统一系统状态
-App/app_sensor.c    AHT30 + 光敏采集
-App/app_display.c   OLED 显示
-App/app_wifi.c      ESP01S AT / WiFi 入网
-App/app_mqtt.c      MQTT CONNECT / PUBLISH 最小发布验证
+App/app_sensor.c    AHT30 与光敏采集
+App/app_display.c   OLED 页面更新
+App/app_wifi.c      ESP01S AT 与 WiFi 入网
+App/app_mqtt.c      MQTT CONNECT / PUBLISH
 ```
 
-当前主要任务包括：
+### 统一状态模型
 
-- `sensorTask`：周期采集 AHT30 和光敏 ADC。
-- `displayTask`：刷新 OLED 状态页面。
-- `keyTask`：处理 KEY0 / KEY1 / KEY2。
-- `wifiTask`：执行 ESP01S AT 入网流程。
-- `mqttTask`：在 WiFi 成功后执行 MQTT TCP 连接、CONNECT 握手和一次环境数据发布。
+`AppState_t` 统一保存以下信息：
 
-### 本地环境采集
+- 温度、湿度和 AHT30 有效状态。
+- ADC 原始值与光照百分比。
+- `NORMAL / FOCUS / ALERT` 工作模式。
+- 报警状态。
+- WiFi 与 MQTT 连接状态。
 
-AHT30 温湿度通过 I2C1 读取，光敏传感器使用板载 `PF7 / ADC3_IN5` 真实采样。
+OLED、串口和 MQTT 均读取同一份状态数据，保证不同输出端的数据一致性，并降低任务之间的直接耦合。
 
-验证现象：
-
-```text
-[display] mode=NORMAL light_raw=194  light=96 aht=OK temp=26.8 hum=65.3 wifi=OFF mqtt=OFF
-[display] mode=NORMAL light_raw=2897 light=30 aht=OK temp=26.8 hum=65.3 wifi=OFF mqtt=OFF
-```
-
-### OLED 状态显示
-
-OLED 显示内容来自统一的 `AppState_t`，当前包括：
-
-```text
-T: 温度
-H: 湿度
-L: 光照百分比
-W: WiFi 状态
-```
-
-WiFi 短状态映射：
-
-```text
-APP_WIFI_OFF        -> W:OFF
-APP_WIFI_CONNECTING -> W:CONN
-APP_WIFI_CONNECTED  -> W:OK
-APP_WIFI_ERROR      -> W:ERR
-```
-
-### 按键交互
+### 本地交互
 
 | 按键 | 功能 |
 | --- | --- |
 | KEY0 | 切换 `NORMAL / FOCUS / ALERT` 模式 |
-| KEY1 | 打印系统状态，并触发 I2C 扫描 |
-| KEY2 | 清除报警状态，必要时回到 `NORMAL` |
+| KEY1 | 打印系统状态并触发 I2C 设备扫描 |
+| KEY2 | 清除报警状态，必要时恢复到 `NORMAL` |
 
-I2C 扫描验证：
+I2C 扫描结果：
 
 ```text
 [i2c] found device: 0x38
@@ -135,9 +135,9 @@ I2C 扫描验证：
 [i2c] scan done, found=2
 ```
 
-### ESP01S WiFi 入网
+### WiFi 入网
 
-ESP01S 使用 USART3 进行 AT 指令通信。当前已验证链路：
+ESP01S 通过 USART3 执行以下入网流程：
 
 ```text
 AT
@@ -147,57 +147,54 @@ AT+CWJAP="YOUR_WIFI_SSID","YOUR_WIFI_PASSWORD"
 AT+CIFSR
 ```
 
-验证结果：
+成功入网后，WiFi 状态同步写入 `AppState_t`，OLED 显示 `W:OK`，串口输出连接与 IP 获取结果。
+
+### MQTT 环境数据发布
+
+STM32 通过 ESP01S 建立到 `broker.hivemq.com:1883` 的 TCP 连接，在本地构造并发送 MQTT 3.1.1 CONNECT 与 PUBLISH 二进制报文。
+
+发布主题：
 
 ```text
-WIFI CONNECTED
-WIFI GOT IP
-OK
-[esp] wifi connected and got ip
+stm32f407/env
 ```
 
-### MQTT 最小发布验证
+JSON 数据格式：
 
-当前已完成 MQTT 3.1.1 CONNECT / CONNACK / PUBLISH 最小闭环，验证链路：
-
-```text
-WiFi CONNECTED / WIFI GOT IP
-AT+CIPMUX=0
-AT+CIPSTART="TCP","broker.hivemq.com",1883
-AT+CIPSEND=32
-MQTT CONNECT packet
-+IPD,4: 20 02 00 00
-AT+CIPSEND=60
-MQTT PUBLISH packet
+```json
+{"temp":27.6,"hum":51.2,"light":97,"mode":"NORMAL"}
 ```
 
-验证结果：
+连接与发布结果：
 
 ```text
 [mqtt] tcp connect OK
-[esp] tcp payload SEND OK
 [mqtt] CONNECT packet SEND OK
 [mqtt] CONNACK OK
 [mqtt] PUBLISH packet SEND OK
 ```
 
-说明：
+当前固件采用 WiFi 入网后单次发布策略。周期上报与断线重连作为下一版本的运行策略扩展。
 
-- 文档和截图中不保留真实 WiFi 密码。
-- 当前完成的是一次 MQTT 环境数据发布验证，不等同于长期周期发布。
-- WiFi / MQTT 断线恢复和周期发布仍是后续优化项。
+## 技术亮点
+
+- 使用 FreeRTOS 对采集、显示、交互和网络通信进行任务化拆分。
+- 使用 `AppState_t` 建立统一状态模型，保证 OLED、串口和 MQTT 数据一致。
+- 同时覆盖 I2C 数字传感器、ADC 模拟采样、GPIO 按键和多路 UART 通信。
+- 在 STM32 侧构造 MQTT 3.1.1 CONNECT / PUBLISH 报文，而非依赖封装后的 MQTT 模块指令。
+- 针对 ESP01S 分段返回和二进制响应，实现缓存接收、text/hex 诊断及关键响应判断。
+- 通过整数与小数位拼接生成 JSON 浮点字段，避免依赖嵌入式 `printf` 浮点支持。
+- 应用层与 CubeMX 生成代码分离，降低外设配置重新生成时的维护成本。
 
 ## 构建方式
 
-项目使用 CMake Preset + Ninja + ARM GCC。
-
-构建 Debug：
+项目使用 CMake Preset、Ninja 和 ARM GCC：
 
 ```bash
 cmake --build --preset Debug
 ```
 
-生成产物位于：
+生成产物：
 
 ```text
 build/Debug/stm32f407_aiot_env_assistant.elf
@@ -208,12 +205,12 @@ build/Debug/stm32f407_aiot_env_assistant.elf
 ```text
 .
 ├── App/                         # 应用层代码
-├── Core/                        # CubeMX 生成核心代码与 FreeRTOS 任务入口
+├── Core/                        # CubeMX 核心代码与 FreeRTOS 任务入口
 ├── Drivers/                     # STM32 HAL 驱动
 ├── Middlewares/                 # FreeRTOS 等中间件
 ├── docs/
-│   ├── 项目功能介绍.md           # 项目功能、问题解决与后续计划
-│   └── images/                  # 验证截图、硬件照片、视频
+│   ├── 项目功能介绍.md           # 功能设计、问题定位与演进路线
+│   └── images/                  # 硬件照片与运行结果
 ├── tools/
 │   └── check_protected_changes.sh
 ├── CMakeLists.txt
@@ -221,51 +218,22 @@ build/Debug/stm32f407_aiot_env_assistant.elf
 └── stm32f407_aiot_env_assistant.ioc
 ```
 
-## 验证证据
+## 详细文档
 
-图片索引见：
+- [项目功能介绍](docs/项目功能介绍.md)
+- [运行图片索引](docs/images/README.md)
 
-- [docs/images/README.md](docs/images/README.md)
+## 演进路线
 
-关键证据包括：
+### 本地交互增强
 
-- OLED WiFi 状态显示：`docs/images/oled-wifi-ok.jpg`
-- WiFi 入网成功日志：`docs/images/esp01s-wifi-joined-cwjap.png`
-- MQTT PUBLISH 成功串口日志：`docs/images/mqtt-16-publish-send-ok.png`
-- MQTT 平台端接收 JSON：`docs/images/mqtt-17-platform-json-received.png`
-- 光敏 ADC 串口变化：`docs/images/light-sensor-serial-percent.png`
-- I2C 扫描发现 AHT30 和 OLED：`docs/images/i2c-scan-aht30-oled.png`
+- 优化 OLED 信息层级和中文界面。
+- 增加启动页、设备状态页和报警页。
+- 强化工作模式与网络状态的视觉反馈。
 
-## 当前状态
+### 智能环境助手
 
-已完成：
-
-- 本地环境采集：AHT30 + 板载光敏。
-- 本地显示：OLED 温度、湿度、光照、WiFi 状态。
-- 本地交互：KEY0 / KEY1 / KEY2。
-- 串口日志与 I2C 扫描。
-- ESP01S 最小 AT 通信。
-- ESP01S WiFi 基础入网。
-- MQTT CONNECT / CONNACK / PUBLISH 最小发布验证。
-
-进行中 / 待优化：
-
-- WiFi 失败重试。
-- WiFi 断线恢复。
-- I2C1 互斥或统一访问调度。
-- MQTT 周期发布与断线恢复。
-- GitHub 展示文档继续打磨。
-
-## 项目亮点
-
-- 使用 FreeRTOS 拆分传感器、显示、按键、WiFi 等任务。
-- 用统一 `AppState_t` 管理温湿度、光照、模式、报警、WiFi/MQTT 状态。
-- 真实接入板载光敏传感器，而不是停留在模拟数据。
-- OLED 与串口共用同一份状态，便于调试和展示。
-- ESP01S AT 通信调试过程中定位了“只收到回显开头 A”的接收窗口问题，并改成先缓存、后打印。
-- MQTT CONNECT / PUBLISH 通过 text + hex 日志和平台订阅结果验证，保留了从超时、链路关闭到成功发布的调试证据。
-- 保留功能截图和硬件证据，便于复现和项目展示。
-
-## 说明
-
-这是一个学习和展示性质的嵌入式项目，当前重点是把桌面环境助手的本地闭环、WiFi 入网链路和 MQTT 最小发布验证做完整。MQTT 周期发布、断线重连、I2C mutex 和更完整状态机属于后续扩展方向。
+- 扩展 CO2、空气质量和人体存在感知。
+- 增加环境报警、RGB 状态提示和自动通风控制。
+- 引入周期上报、断线恢复与历史趋势分析。
+- 接入语音交互和云端大模型服务，实现环境问答、状态解释和设备控制。
