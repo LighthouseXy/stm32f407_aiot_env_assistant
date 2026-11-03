@@ -181,7 +181,7 @@ JSON 数据格式：
 - 使用 FreeRTOS 对采集、显示、交互和网络通信进行任务化拆分。
 - 使用 `AppState_t` 建立统一状态模型，保证 OLED、串口和 MQTT 数据一致。
 - 同时覆盖 I2C 数字传感器、ADC 模拟采样、GPIO 按键和多路 UART 通信。
-- 在 STM32 侧构造 MQTT 3.1.1 CONNECT / PUBLISH 报文，而非依赖封装后的 MQTT 模块指令。
+- 在 STM32 应用层直接构造 MQTT 3.1.1 CONNECT / PUBLISH 报文，通过 ESP01S 的 TCP 发送接口传输。
 - 针对 ESP01S 分段返回和二进制响应，实现缓存接收、text/hex 诊断及关键响应判断。
 - 通过整数与小数位拼接生成 JSON 浮点字段，避免依赖嵌入式 `printf` 浮点支持。
 - 应用层与 CubeMX 生成代码分离，降低外设配置重新生成时的维护成本。

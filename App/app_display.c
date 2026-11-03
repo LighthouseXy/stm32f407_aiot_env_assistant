@@ -64,7 +64,7 @@ static void AppDisplay_FormatFloat1(char *buf, size_t len, float value)
         return;
     }
 
-    /* OLED 显示不依赖 printf 浮点格式化，先转成 x.y 字符串。 */
+    /* 将数值放大 10 倍并取整，再用整数格式化拼成 x.y 字符串，避免依赖 printf 浮点格式化。 */
     int value_x10 = (value >= 0.0f) ?
                     (int)(value * 10.0f + 0.5f) :
                     (int)(value * 10.0f - 0.5f);

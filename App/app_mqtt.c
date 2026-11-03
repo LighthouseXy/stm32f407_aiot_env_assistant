@@ -228,7 +228,7 @@ void AppMqtt_Process(void)
 
       /*
        * CIPMUX 是 TCP 连接前的本地配置命令。
-       * 偶发超时不直接判定 MQTT 失败，下一轮继续重试。
+       * 偶发超时时保持 CONNECTING 状态，下一轮继续重试。
        */
       if (AppWifi_SendCommand("AT+CIPMUX=0", "OK", 5000U) != 0) {
         printf("[mqtt] CIPMUX failed, retry later\r\n");
@@ -274,7 +274,7 @@ void AppMqtt_Process(void)
         } else {
           /*
            * 有时本轮只收到 +IPD,4:，真正的 CONNACK 4 字节会紧跟在后面。
-           * 不立即判失败，进入补收状态再读一次。
+           * 保持 CONNECTING 状态，进入补收状态再读一次。
            */
           printf("[mqtt] CONNACK missing, wait more\r\n");
           state->mqtt_status = APP_MQTT_CONNECTING;
