@@ -25,7 +25,7 @@
 | --- | --- | --- |
 | `key0-mode-switch-led-on.png` | KEY0 模式切换验证截图 | 证明模式切换或状态变化有效 |
 | `key0-mode-switch-demo.mp4` | KEY0 模式切换视频 | 保存动态功能证据 |
-| `key0-regression-after-key1.png` | KEY1 修改后 KEY0 回归验证截图 | 证明新增 KEY1 后 KEY0 功能未破坏 |
+| `key0-regression-after-key1.png` | KEY1 修改后 KEY0 回归验证截图 | 证明新增 KEY1 后 KEY0 仍可切换模式 |
 
 ## KEY1 状态打印验证
 
